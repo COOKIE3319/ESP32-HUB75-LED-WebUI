@@ -25,6 +25,37 @@
         <span class="badge badge-err">✗ 连接失败</span>
         <span>{{ connectionError }}</span>
       </div>
+
+      <div v-if="deviceInfo" class="settings-panel">
+        <div class="settings-title">🎛️ 显示调节</div>
+        <div class="settings-row">
+          <label class="settings-label">Gamma</label>
+          <input
+            v-model.number="gammaValue"
+            type="range"
+            :min="gammaMin"
+            :max="gammaMax"
+            step="0.01"
+            class="gamma-slider"
+          />
+          <input
+            v-model.number="gammaValue"
+            type="number"
+            :min="gammaMin"
+            :max="gammaMax"
+            step="0.01"
+            class="input-gamma"
+          />
+          <button
+            @click="applySettings"
+            :disabled="applyingSettings"
+            class="btn btn-check"
+          >
+            {{ applyingSettings ? '应用中...' : '应用' }}
+          </button>
+        </div>
+        <p class="hint">建议范围：{{ gammaMin.toFixed(2) }} - {{ gammaMax.toFixed(2) }}，数值越小暗部越亮</p>
+      </div>
     </section>
 
     <!-- 图片选择与预览 -->
@@ -117,6 +148,10 @@ const isDragging = ref(false)
 
 const uploading = ref(false)
 const uploadResult = ref(null)
+const gammaValue = ref(1.0)
+const gammaMin = ref(0.6)
+const gammaMax = ref(2.2)
+const applyingSettings = ref(false)
 
 let rgbData = null
 
@@ -136,6 +171,7 @@ async function checkConnection() {
     const res = await fetch(`http://${deviceIP.value}/status`, { signal: AbortSignal.timeout(5000) })
     if (res.ok) {
       deviceInfo.value = await res.json()
+      await loadSettings()
     } else {
       connectionError.value = `HTTP ${res.status}`
     }
@@ -143,6 +179,49 @@ async function checkConnection() {
     connectionError.value = e.name === 'TimeoutError' ? '连接超时' : '无法连接到设备'
   } finally {
     checking.value = false
+  }
+}
+
+async function loadSettings() {
+  if (!deviceIP.value) return
+  try {
+    const res = await fetch(`http://${deviceIP.value}/settings`, { signal: AbortSignal.timeout(5000) })
+    if (!res.ok) return
+    const data = await res.json()
+    if (typeof data.gamma === 'number') gammaValue.value = data.gamma
+    if (typeof data.gammaMin === 'number') gammaMin.value = data.gammaMin
+    if (typeof data.gammaMax === 'number') gammaMax.value = data.gammaMax
+  } catch (_) {
+    // 设置读取失败时保持当前值，不打断主流程
+  }
+}
+
+async function applySettings() {
+  if (!deviceIP.value) return
+
+  const clampedGamma = Math.min(gammaMax.value, Math.max(gammaMin.value, Number(gammaValue.value)))
+  gammaValue.value = clampedGamma
+  applyingSettings.value = true
+
+  try {
+    const body = new URLSearchParams({ gamma: clampedGamma.toFixed(2) })
+    const res = await fetch(`http://${deviceIP.value}/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body
+    })
+
+    const data = await res.json()
+    if (res.ok) {
+      if (typeof data.gamma === 'number') gammaValue.value = data.gamma
+      uploadResult.value = { ok: true, message: `✓ 设置已应用 (Gamma=${gammaValue.value.toFixed(2)})` }
+    } else {
+      uploadResult.value = { ok: false, message: `✗ 设置失败: ${data.error || '未知错误'}` }
+    }
+  } catch (e) {
+    uploadResult.value = { ok: false, message: `✗ 网络错误: ${e.message}` }
+  } finally {
+    applyingSettings.value = false
   }
 }
 
@@ -315,6 +394,45 @@ async function clearScreen() {
   margin-top: 12px;
   font-size: 13px;
   color: #aaa;
+}
+
+.settings-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #2a2a3e;
+}
+
+.settings-title {
+  font-size: 13px;
+  color: #b8b8d4;
+  margin-bottom: 10px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-label {
+  width: 52px;
+  font-size: 13px;
+  color: #aaa;
+}
+
+.gamma-slider {
+  flex: 1;
+}
+
+.input-gamma {
+  width: 86px;
+  padding: 8px 10px;
+  background: #12121f;
+  border: 1px solid #3a3a50;
+  border-radius: 8px;
+  color: #e0e0e0;
+  font-size: 13px;
+  outline: none;
 }
 
 .badge {
